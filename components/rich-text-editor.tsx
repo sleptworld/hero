@@ -665,10 +665,132 @@ const theme = {
 function Toolbar() {
   const [editor] = useLexicalComposerContext()
   const fileInputRef = React.useRef<HTMLInputElement | null>(null)
+  const quickEquationInputRef = React.useRef<HTMLInputElement | null>(null)
+  const suppressNextEditorTextInputRef = React.useRef(false)
+  const ignoreNextBeforeInputDataRef = React.useRef(false)
+  const cachedTextOnCloseRef = React.useRef<string | null>(null)
   const [headingValue, setHeadingValue] = React.useState("paragraph")
   const [showImageUrlDialog, setShowImageUrlDialog] = React.useState(false)
   const [imageUrl, setImageUrl] = React.useState("")
   const [imageAlt, setImageAlt] = React.useState("")
+  const [showQuickEquationDialog, setShowQuickEquationDialog] = React.useState(false)
+  const [quickEquation, setQuickEquation] = React.useState("")
+  const [quickEquationInline, setQuickEquationInline] = React.useState(true)
+  const [cachedTextOnQuickEquationClose, setCachedTextOnQuickEquationClose] = React.useState<string | null>(null)
+
+  const openQuickEquationDialog = React.useCallback(
+    (inline: boolean, cachedTextOnClose: string | null) => {
+      suppressNextEditorTextInputRef.current = true
+      cachedTextOnCloseRef.current = cachedTextOnClose
+      setQuickEquation("")
+      setQuickEquationInline(inline)
+      setCachedTextOnQuickEquationClose(cachedTextOnClose)
+      setShowQuickEquationDialog(true)
+    },
+    []
+  )
+
+  const insertLiteralText = React.useCallback((text: string) => {
+    editor.update(() => {
+      let selection = $getSelection()
+      if (!$isRangeSelection(selection)) {
+        $getRoot().selectEnd()
+        selection = $getSelection()
+      }
+      if (!$isRangeSelection(selection)) {
+        return
+      }
+      selection.insertText(text)
+    })
+    editor.focus()
+  }, [editor])
+
+  React.useEffect(() => {
+    if (!showQuickEquationDialog) {
+      return
+    }
+    const timer = window.setTimeout(() => {
+      quickEquationInputRef.current?.focus()
+      quickEquationInputRef.current?.select()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [showQuickEquationDialog])
+
+  React.useEffect(() => {
+    const isInlineShortcutKey = (event: KeyboardEvent) => {
+      if (event.key === "$" || event.key === "¥" || event.key === "￥") {
+        return true
+      }
+      return event.code === "IntlYen" || (event.code === "Digit4" && event.shiftKey)
+    }
+
+    const isBlockShortcutKey = (event: KeyboardEvent) => {
+      return event.code === "Digit4" || event.code === "Period" || event.code === "IntlYen"
+    }
+
+    const getPrintableKey = (event: KeyboardEvent) => {
+      if (event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
+        return event.key
+      }
+      return null
+    }
+
+    const onNativeKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing) {
+        return
+      }
+      const hasOnlyAltModifier = event.altKey && !event.ctrlKey && !event.metaKey
+      const hasNoModifier = !event.altKey && !event.ctrlKey && !event.metaKey
+      const isBlockShortcut = hasOnlyAltModifier && isBlockShortcutKey(event)
+      const isInlineShortcut = hasNoModifier && isInlineShortcutKey(event)
+
+      if (!isBlockShortcut && !isInlineShortcut) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+      const fallbackText = getPrintableKey(event)
+      ignoreNextBeforeInputDataRef.current = Boolean(fallbackText)
+      openQuickEquationDialog(!isBlockShortcut, fallbackText)
+    }
+
+    const onBeforeInput = (event: Event) => {
+      const inputEvent = event as InputEvent
+      const inputData = inputEvent.data ?? ""
+      if (showQuickEquationDialog || suppressNextEditorTextInputRef.current) {
+        inputEvent.preventDefault()
+        if (inputData && !ignoreNextBeforeInputDataRef.current) {
+          const base = suppressNextEditorTextInputRef.current ? "" : (cachedTextOnCloseRef.current ?? "")
+          const nextCached = `${base}${inputData}`
+          cachedTextOnCloseRef.current = nextCached
+          setCachedTextOnQuickEquationClose(nextCached)
+        }
+        ignoreNextBeforeInputDataRef.current = false
+        suppressNextEditorTextInputRef.current = false
+        return
+      }
+    }
+
+    let currentRootElement: null | HTMLElement = null
+    const unregisterRootListener = editor.registerRootListener((rootElement, prevRootElement) => {
+      prevRootElement?.removeEventListener("keydown", onNativeKeyDown, true)
+      prevRootElement?.removeEventListener("beforeinput", onBeforeInput, true)
+      if (rootElement) {
+        rootElement.addEventListener("keydown", onNativeKeyDown, true)
+        rootElement.addEventListener("beforeinput", onBeforeInput, true)
+        currentRootElement = rootElement
+      } else {
+        currentRootElement = null
+      }
+    })
+
+    return () => {
+      currentRootElement?.removeEventListener("keydown", onNativeKeyDown, true)
+      currentRootElement?.removeEventListener("beforeinput", onBeforeInput, true)
+      unregisterRootListener()
+    }
+  }, [editor, openQuickEquationDialog, showQuickEquationDialog])
 
   const formatBlock = React.useCallback(
     (kind: "paragraph" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "quote") => {
@@ -771,6 +893,28 @@ function Toolbar() {
     },
     [editor]
   )
+
+  const submitQuickEquation = React.useCallback(() => {
+    const normalized = quickEquation.trim()
+    if (!normalized) {
+      const fallbackText = cachedTextOnQuickEquationClose
+      setCachedTextOnQuickEquationClose(null)
+      cachedTextOnCloseRef.current = null
+      setShowQuickEquationDialog(false)
+      if (fallbackText) {
+        insertLiteralText(fallbackText)
+      }
+      return
+    }
+    setCachedTextOnQuickEquationClose(null)
+    cachedTextOnCloseRef.current = null
+    setShowQuickEquationDialog(false)
+    editor.dispatchCommand(INSERT_EQUATION_COMMAND, {
+      equation: normalized,
+      inline: quickEquationInline,
+    })
+    editor.focus()
+  }, [cachedTextOnQuickEquationClose, editor, insertLiteralText, quickEquation, quickEquationInline])
 
   const insertCodeBlock = React.useCallback(() => {
     editor.update(() => {
@@ -896,6 +1040,71 @@ function Toolbar() {
                   Cancel
                 </Button>
                 <Button size="sm" onClick={insertImageFromUrl}>
+                  Insert
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          <Dialog
+            open={showQuickEquationDialog}
+            onOpenChange={(open) => {
+              setShowQuickEquationDialog(open)
+              if (!open) {
+                suppressNextEditorTextInputRef.current = false
+                ignoreNextBeforeInputDataRef.current = false
+                if (cachedTextOnQuickEquationClose) {
+                  insertLiteralText(cachedTextOnQuickEquationClose)
+                }
+                setCachedTextOnQuickEquationClose(null)
+                cachedTextOnCloseRef.current = null
+                setQuickEquation("")
+                setQuickEquationInline(true)
+              }
+            }}
+          >
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Insert Equation</DialogTitle>
+              </DialogHeader>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant={quickEquationInline ? "default" : "outline"}
+                  onClick={() => setQuickEquationInline(true)}
+                >
+                  Inline
+                </Button>
+                <Button
+                  size="sm"
+                  variant={!quickEquationInline ? "default" : "outline"}
+                  onClick={() => setQuickEquationInline(false)}
+                >
+                  Block
+                </Button>
+              </div>
+              <Input
+                ref={quickEquationInputRef}
+                value={quickEquation}
+                onChange={(event) => setQuickEquation(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault()
+                    submitQuickEquation()
+                    return
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault()
+                    setShowQuickEquationDialog(false)
+                  }
+                }}
+                placeholder={quickEquationInline ? "E=mc^2" : "\\int_a^b f(x)\\,dx"}
+                className="h-9 font-mono"
+              />
+              <DialogFooter>
+                <Button size="sm" variant="ghost" onClick={() => setShowQuickEquationDialog(false)}>
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={submitQuickEquation}>
                   Insert
                 </Button>
               </DialogFooter>

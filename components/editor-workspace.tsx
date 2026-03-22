@@ -32,6 +32,9 @@ import {
 import { readOnboardingState } from "@/lib/onboarding-storage"
 
 type SaveTarget = "publish" | "draft"
+type SaveOptions = {
+  silent?: boolean
+}
 
 type SaveHexoPostResult = {
   relative_path: string
@@ -67,6 +70,49 @@ function extractTitle(frontMatter: string | null): string {
   return match?.[1]?.trim().replace(/^['"]|['"]$/g, "") ?? ""
 }
 
+function parseFrontMatterList(frontMatter: string | null, field: "tags" | "categories"): string[] {
+  if (!frontMatter) {
+    return []
+  }
+
+  const source = frontMatter
+  const escapedField = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+  const blockMatch = source.match(new RegExp(`^\\s*${escapedField}\\s*:\\s*$([\\s\\S]*?)(?=^\\S|\\Z)`, "m"))
+  if (blockMatch?.[1]) {
+    const values = blockMatch[1]
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("- "))
+      .map((line) => line.slice(2).trim().replace(/^['"]|['"]$/g, ""))
+      .filter((line) => line.length > 0)
+    if (values.length > 0) {
+      return values
+    }
+  }
+
+  const inlineMatch = source.match(new RegExp(`^\\s*${escapedField}\\s*:\\s*(.+)\\s*$`, "m"))
+  if (!inlineMatch?.[1]) {
+    return []
+  }
+
+  const rawValue = inlineMatch[1].trim()
+  if (!rawValue) {
+    return []
+  }
+  if (rawValue.startsWith("[") && rawValue.endsWith("]")) {
+    return rawValue
+      .slice(1, -1)
+      .split(",")
+      .map((item) => item.trim().replace(/^['"]|['"]$/g, ""))
+      .filter((item) => item.length > 0)
+  }
+  return rawValue
+    .split(",")
+    .map((item) => item.trim().replace(/^['"]|['"]$/g, ""))
+    .filter((item) => item.length > 0)
+}
+
 export function EditorWorkspace() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -85,6 +131,7 @@ export function EditorWorkspace() {
   const [publishDialogOpen, setPublishDialogOpen] = React.useState(false)
   const [publishTags, setPublishTags] = React.useState("")
   const [publishCategories, setPublishCategories] = React.useState("")
+  const autosaveTimerRef = React.useRef<number | null>(null)
 
   const pathFromQuery = searchParams.get("path")
   const isNewFromQuery = searchParams.get("new") === "1"
@@ -178,9 +225,15 @@ export function EditorWorkspace() {
   }, [router])
 
   const handleSave = React.useCallback(
-    async (target: SaveTarget, metadata?: { tags?: string[]; categories?: string[] }) => {
+    async (
+      target: SaveTarget,
+      metadata?: { tags?: string[]; categories?: string[] },
+      options?: SaveOptions
+    ) => {
       if (!repoPath || !isTauri()) {
-        toast.error("Tauri runtime and repository are required.")
+        if (!options?.silent) {
+          toast.error("Tauri runtime and repository are required.")
+        }
         return false
       }
       setSaving(true)
@@ -201,7 +254,9 @@ export function EditorWorkspace() {
         setSeedTitle(result.title)
         setSeedMarkdown(draftMarkdown)
         setDraftTitle(result.title)
-        toast.success(target === "publish" ? "Published" : "Saved to drafts")
+        if (!options?.silent) {
+          toast.success(target === "publish" ? "Published" : "Saved to drafts")
+        }
 
         const targetUrl = `/editor?path=${encodeURIComponent(result.relative_path)}`
         router.replace(targetUrl)
@@ -223,7 +278,64 @@ export function EditorWorkspace() {
       .filter((v) => v.length > 0)
   }, [])
 
+  const openPublishDialog = React.useCallback(() => {
+    const currentTags = parseFrontMatterList(frontMatter, "tags")
+    const currentCategories = parseFrontMatterList(frontMatter, "categories")
+    setPublishTags(currentTags.join(", "))
+    setPublishCategories(currentCategories.join(", "))
+    setPublishDialogOpen(true)
+  }, [frontMatter])
+
   const isCreateMode = isNewFromQuery || !relativePath
+  const getAutoSaveTarget = React.useCallback((path: string): SaveTarget => {
+    return path.startsWith("source/_posts/") ? "publish" : "draft"
+  }, [])
+
+  React.useEffect(() => {
+    if (autosaveTimerRef.current !== null) {
+      window.clearTimeout(autosaveTimerRef.current)
+      autosaveTimerRef.current = null
+    }
+
+    if (loading || isCreateMode || !relativePath || !isDirty || saving || !repoPath || !isTauri()) {
+      return
+    }
+
+    autosaveTimerRef.current = window.setTimeout(() => {
+      const target = getAutoSaveTarget(relativePath)
+      void handleSave(target, undefined, { silent: true })
+    }, 1200)
+
+    return () => {
+      if (autosaveTimerRef.current !== null) {
+        window.clearTimeout(autosaveTimerRef.current)
+        autosaveTimerRef.current = null
+      }
+    }
+  }, [getAutoSaveTarget, handleSave, isCreateMode, isDirty, loading, relativePath, repoPath, saving])
+
+  React.useEffect(() => {
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Backspace" || event.defaultPrevented || event.isComposing) {
+        return
+      }
+
+      const target = event.target as HTMLElement | null
+      const tag = target?.tagName?.toLowerCase()
+      const isTextInput =
+        tag === "input" ||
+        tag === "textarea" ||
+        target?.isContentEditable === true ||
+        target?.closest("[contenteditable='true']") !== null
+
+      if (!isTextInput) {
+        event.preventDefault()
+      }
+    }
+
+    window.addEventListener("keydown", onWindowKeyDown, true)
+    return () => window.removeEventListener("keydown", onWindowKeyDown, true)
+  }, [])
 
   return (
     <main className="h-svh min-h-svh bg-background">
@@ -254,7 +366,7 @@ export function EditorWorkspace() {
                   <Save className="size-4" />
                   Save to Drafts
                 </Button>
-                <Button onClick={() => setPublishDialogOpen(true)} disabled={saving || !repoPath}>
+                <Button onClick={openPublishDialog} disabled={saving || !repoPath}>
                   <Send className="size-4" />
                   Publish
                 </Button>
@@ -263,7 +375,7 @@ export function EditorWorkspace() {
               <Button
                 className="pointer-events-auto shadow-lg"
                 size="icon-lg"
-                onClick={() => setPublishDialogOpen(true)}
+                onClick={openPublishDialog}
                 disabled={saving || !repoPath}
                 aria-label={saving ? "Saving..." : "保存"}
                 title={saving ? "Saving..." : "保存"}
