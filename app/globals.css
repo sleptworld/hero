@@ -7,7 +7,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -81,6 +81,13 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --hljs-fg: oklch(0.28 0.02 260);
+  --hljs-comment: oklch(0.56 0 0);
+  --hljs-keyword: oklch(0.52 0.16 282);
+  --hljs-string: oklch(0.56 0.14 146);
+  --hljs-number: oklch(0.55 0.16 26);
+  --hljs-title: oklch(0.42 0.13 256);
+  --hljs-attr: oklch(0.49 0.12 206);
 }
 
 .dark {
@@ -115,16 +122,74 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --hljs-fg: oklch(0.88 0.01 260);
+  --hljs-comment: oklch(0.64 0 0);
+  --hljs-keyword: oklch(0.76 0.14 292);
+  --hljs-string: oklch(0.84 0.11 150);
+  --hljs-number: oklch(0.8 0.13 32);
+  --hljs-title: oklch(0.8 0.09 247);
+  --hljs-attr: oklch(0.82 0.07 220);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground select-none overflow-hidden overscroll-none border-t border-border;
   }
+
   html {
-    @apply font-sans;
+    @apply font-sans h-full overflow-hidden overscroll-none;
   }
+
+  input,
+  textarea {
+    @apply select-text;
+  }
+}
+
+.hljs {
+  background: transparent !important;
+  color: var(--hljs-fg) !important;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--hljs-comment) !important;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-link {
+  color: var(--hljs-keyword) !important;
+}
+
+.hljs-string,
+.hljs-doctag,
+.hljs-template-tag,
+.hljs-template-variable {
+  color: var(--hljs-string) !important;
+}
+
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-variable,
+.hljs-meta {
+  color: var(--hljs-number) !important;
+}
+
+.hljs-title,
+.hljs-function {
+  color: var(--hljs-title) !important;
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-type {
+  color: var(--hljs-attr) !important;
 }
